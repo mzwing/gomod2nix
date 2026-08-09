@@ -1,4 +1,4 @@
-schema = 3
+schema = 4
 
 [mod]
   [mod.'github.com/inconshreveable/mousetrap']
@@ -6,33 +6,29 @@ schema = 3
     hash = 'sha256-XWlYH0c8IcxAwQTnIi6WYqq44nOKUylSWxWO/vi+8pE='
 
   [mod.'github.com/nix-community/go-nix']
-    version = 'v0.0.0-20220612195009-5f5614f7ca47'
-    hash = 'sha256-eBPzib8STUZnDpLFpWZz+F00thbp1P/98oiEE/XWE+M='
+    version = 'v0.0.0-20250101154619-4bdde671e0a1'
+    hash = 'sha256-8mewNCfdfhZtkckVxxJA3aNS7mGZEwg6xXymEq8g1wY='
 
   [mod.'github.com/pelletier/go-toml/v2']
-    version = 'v2.2.4'
-    hash = 'sha256-8qQIPldbsS5RO8v/FW/se3ZsAyvLzexiivzJCbGRg2Q='
-
-  [mod.'github.com/sirupsen/logrus']
-    version = 'v1.9.4'
-    hash = 'sha256-ltRvmtM3XTCAFwY0IesfRqYIivyXPPuvkFjL4ARh1wg='
+    version = 'v2.4.3'
+    hash = 'sha256-CyCjKBN+zUciGhQiaFpq54qv+NDITcuh5U2HmjArow4='
 
   [mod.'github.com/spf13/cobra']
-    version = 'v1.10.1'
-    hash = 'sha256-OP6wdqk4dvBD8U5aicTkySHZ2s0LWnBo2TST2SmgcpM='
+    version = 'v1.10.2'
+    hash = 'sha256-nbRCTFiDCC2jKK7AHi79n7urYCMP5yDZnWtNVJrDi+k='
 
   [mod.'github.com/spf13/pflag']
     version = 'v1.0.9'
     hash = 'sha256-YAjyYpq5BXCosVJtvYLWFG1t4gma2ylzc7ILLoj/hD8='
 
+  [mod.'github.com/stretchr/testify']
+    version = 'v1.10.0'
+    hash = 'sha256-fJ4gnPr0vnrOhjQYQwJ3ARDKPsOtA7d4olQmQWR+wpI='
+
   [mod.'golang.org/x/mod']
-    version = 'v0.32.0'
-    hash = 'sha256-4gbgIqTOo0vcYV3l4MIwmT/h8H9PXmcfrJ3z4B26Zl0='
+    version = 'v0.38.0'
+    hash = 'sha256-BpKfvsmb7ecEDvTBKx9ZHauxoWRkOAZCqg4BrHM2/S0='
 
-  [mod.'golang.org/x/sys']
-    version = 'v0.14.0'
-    hash = 'sha256-ReIRQmONicRW9idzGVPCBx5TTcKacmQTF1vPC3L4SxY='
-
-  [mod.'golang.org/x/tools/go/vcs']
-    version = 'v0.1.0-deprecated'
-    hash = 'sha256-57YB10tiRsVSRvJqKYST+iON6yZYGL7eRSzrFcImC8Y='
+  [mod.'golang.org/x/sync']
+    version = 'v0.22.0'
+    hash = 'sha256-VZjl0fAM0p/nI81zh+pdBjzxFupx0UcKYXBBpL2ZS7k='

@@ -1,0 +1,8 @@
+schema = 4
+subPackages = ['cmd/tool']
+goPackagePath = 'example.com/tool'
+
+[mod]
+  [mod.'example.com/tool']
+    version = 'v1.0.0'
+    hash = 'sha256-EIc3IeRJm4MiprN/FTG06/rI1f20NIeVRNIQLoJpBKc='

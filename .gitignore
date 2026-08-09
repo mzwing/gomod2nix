@@ -1,6 +1,12 @@
 /gomod2nix
 result*
-/tests/*/gomod2nix.toml
-/tests/*/go.mod
 .idea
 .direnv
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# pre-commit
+.pre-commit-config.yaml

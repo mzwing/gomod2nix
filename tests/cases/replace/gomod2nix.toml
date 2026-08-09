@@ -1,0 +1,13 @@
+schema = 4
+
+[mod]
+  [mod.'example.com/depa']
+    version = 'v1.0.1'
+    hash = 'sha256-3gAkUXPiC58dtu8N0K5r1U8zZsaSzkDi6XFcECgWWYE='
+    replaced = 'example.com/depa-fork'
+
+[cacheModules]
+  [cacheModules.'example.com/depa']
+    packages = [
+      'example.com/depa'
+    ]

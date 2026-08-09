@@ -5,15 +5,12 @@ import (
 	"go/ast"
 	"go/printer"
 	"go/token"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/mod/module"
-	"golang.org/x/tools/go/vcs" // nolint:staticcheck
 )
 
 type TempProject struct {
@@ -34,45 +31,18 @@ func NewTempProject(packages []string) (*TempProject, error) {
 		install[i] = imp[:idx]
 	}
 
-	var goPackagePath string
-
-	for _, path := range install {
-		log.WithFields(log.Fields{
-			"path": path,
-		}).Info("Finding repo root for import path")
-
-		repoRoot, err := vcs.RepoRootForImportPath(path, false)
-		if err != nil {
-			return nil, err
-		}
-
-		_, versionSuffix, _ := module.SplitPathVersion(path)
-
-		p := repoRoot.Root + versionSuffix
-
-		if goPackagePath != "" && p != goPackagePath {
-			return nil, fmt.Errorf("mixed origin packages are not allowed")
-		}
-
-		goPackagePath = p
-	}
-
-	log.Info("Setting up temporary project")
+	slog.Info("Setting up temporary project")
 
 	dir, err := os.MkdirTemp("", "gomod2nix-proj")
 	if err != nil {
 		return nil, err
 	}
 
-	log.WithFields(log.Fields{
-		"dir": dir,
-	}).Info("Created temporary directory")
+	slog.Info("Created temporary directory", "dir", dir)
 
 	// Create tools.go
 	{
-		log.WithFields(log.Fields{
-			"dir": dir,
-		}).Info("Creating tools.go")
+		slog.Info("Creating tools.go", "dir", dir)
 
 		astFile := &ast.File{
 			Name: ast.NewIdent("main"),
@@ -109,7 +79,7 @@ func NewTempProject(packages []string) (*TempProject, error) {
 		defer func() {
 			err := f.Close()
 			if err != nil {
-				log.Errorf("Error closing tools.go: %v", err)
+				slog.Error("Error closing tools.go", "err", err)
 			}
 		}()
 
@@ -119,16 +89,12 @@ func NewTempProject(packages []string) (*TempProject, error) {
 			return nil, fmt.Errorf("error writing tools.go: %v", err)
 		}
 
-		log.WithFields(log.Fields{
-			"dir": dir,
-		}).Info("Created tools.go")
+		slog.Info("Created tools.go", "dir", dir)
 	}
 
 	// Set up go module
 	{
-		log.WithFields(log.Fields{
-			"dir": dir,
-		}).Info("Initializing go.mod")
+		slog.Info("Initializing go.mod", "dir", dir)
 
 		cmd := exec.Command("go", "mod", "init", "gomod2nix/dummy/package")
 		cmd.Dir = dir
@@ -139,17 +105,13 @@ func NewTempProject(packages []string) (*TempProject, error) {
 			return nil, fmt.Errorf("error creating go module: %v", err)
 		}
 
-		log.WithFields(log.Fields{
-			"dir": dir,
-		}).Info("Done initializing go.mod")
+		slog.Info("Done initializing go.mod", "dir", dir)
 
 		// For every dependency fetch it
 		{
-			log.WithFields(log.Fields{
-				"dir": dir,
-			}).Info("Getting dependencies")
+			slog.Info("Getting dependencies", "dir", dir)
 
-			args := []string{"get", "-d"}
+			args := []string{"get"}
 			args = append(args, packages...)
 
 			cmd := exec.Command("go", args...)
@@ -161,26 +123,69 @@ func NewTempProject(packages []string) (*TempProject, error) {
 				return nil, fmt.Errorf("error fetching: %v", err)
 			}
 
-			log.WithFields(log.Fields{
-				"dir": dir,
-			}).Info("Done getting dependencies")
+			slog.Info("Done getting dependencies", "dir", dir)
 		}
 	}
 
-	subPackages := []string{}
+	// Resolve the module path of every requested package with go list.
+	// This replaces the old VCS probing (golang.org/x/tools/go/vcs): the go
+	// command resolves modules through the configured proxy, which works
+	// for any GOPROXY (including file:// proxies) and for modules that do
+	// not live at their repository root.
+	modulePaths := make(map[string]string) // import path -> module path
 	{
-		prefix, versionSuffix, _ := module.SplitPathVersion(goPackagePath)
-		for _, path := range install {
-			p := strings.TrimPrefix(path, prefix)
-			p = strings.TrimSuffix(p, versionSuffix)
-			p = strings.TrimPrefix(p, "/")
+		args := []string{"list", "-f", "{{.ImportPath}}\u001f{{.Module.Path}}"}
+		args = append(args, install...)
 
-			if p == "" {
+		cmd := exec.Command("go", args...)
+		cmd.Dir = dir
+		cmd.Stderr = os.Stderr
+
+		stdout, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("error resolving module paths: %v", err)
+		}
+
+		for _, line := range strings.Split(string(stdout), "\n") {
+			line = strings.TrimRight(line, "\r")
+			if line == "" {
 				continue
 			}
 
-			subPackages = append(subPackages, p)
+			parts := strings.SplitN(line, "\u001f", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			modulePaths[parts[0]] = parts[1]
 		}
+	}
+
+	var goPackagePath string
+	for _, path := range install {
+		slog.Info("Resolving module path for import path", "path", path)
+
+		p, ok := modulePaths[path]
+		if !ok || p == "" {
+			return nil, fmt.Errorf("could not resolve module for import path: %s", path)
+		}
+
+		if goPackagePath != "" && p != goPackagePath {
+			return nil, fmt.Errorf("mixed origin packages are not allowed")
+		}
+
+		goPackagePath = p
+	}
+
+	subPackages := []string{}
+	for _, path := range install {
+		p := strings.TrimPrefix(path, goPackagePath)
+		p = strings.TrimPrefix(p, "/")
+
+		if p == "" {
+			continue
+		}
+
+		subPackages = append(subPackages, p)
 	}
 
 	return &TempProject{

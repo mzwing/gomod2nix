@@ -1,0 +1,62 @@
+name: Test
+
+# PR verification. Restores the Nix store cache warmed by build.yml (the
+# nix-ci- cache family), so on a warm cache the flake check is mostly
+# substitution plus increments.
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  push:
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  # actions: write is required to purge expired cache entries.
+  actions: write
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  # Master runs always finish (they double as a cache-warming backstop);
+  # iterative pushes to PRs and feature branches cancel superseded runs.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  flake-check:
+    name: Flake checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Nix
+        uses: mzwing/nix-config/.github/actions/setup-nix@master
+        with:
+          cachix-pull: 'false'
+          install-devenv: 'true'
+
+      # Shared with the "Restore Nix store" step of build.yml: one cache
+      # family (nix-ci-) for both workflows. The key must hash the same
+      # lock inputs and use the same gc size.
+      - name: Restore Nix store
+        uses: mzwing/nix-config/.github/actions/restore-nix-store@master
+        with:
+          primary-key: nix-ci-${{ hashFiles('flake.lock', 'devenv.lock', 'go.mod', 'go.sum') }}
+          restore-prefix: nix-ci-
+          gc-max-store-size-linux: 4G
+
+      # Covers everything: the package build (which runs go test in its
+      # checkPhase), the offline end-to-end tests, the gomod2nix.toml
+      # freshness check, alejandra formatting, golangci-lint and
+      # actionlint. All checks are sandboxed and offline (module downloads
+      # in the test builds go through a local file:// proxy).
+      - name: Run flake checks
+        run: nix flake check --no-write-lock-file --print-build-logs
+
+      # typenix lives in the devenv environment (NUR), not in the
+      # flake's nixpkgs, so this cannot be a sandboxed flake check.
+      - name: Type-check Nix
+        run: devenv shell bash -- -euo pipefail -c 'typenix --noEmit'

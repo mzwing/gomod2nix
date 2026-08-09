@@ -1,0 +1,6 @@
+schema = 4
+
+[mod]
+  [mod.'example.com/tool']
+    version = 'v1.0.0'
+    hash = 'sha256-EIc3IeRJm4MiprN/FTG06/rI1f20NIeVRNIQLoJpBKc='

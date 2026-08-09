@@ -1,0 +1,69 @@
+name: Build
+
+# Builds the package and every flake check on master and populates the
+# shared Nix store cache (the nix-ci- cache family). This is the cache
+# warmer: test.yml restores what this workflow saves, so PR verification
+# only ever builds increments instead of cold closures.
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  # actions: write is required to purge expired cache entries.
+  actions: write
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build package and checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # cachix-pull: 'false': no Cachix auth and no cachix-action; the
+      # public caches in the action's substituter list are only ever
+      # pulled from. install-devenv: kept for parity with test.yml.
+      - name: Set up Nix
+        uses: mzwing/nix-config/.github/actions/setup-nix@master
+        with:
+          cachix-pull: 'false'
+          install-devenv: 'true'
+
+      # The action removes stale root-owned store lock files (left behind
+      # by interrupted builds of earlier runs; they break the
+      # unprivileged tar of the post-run store save) and purges stale
+      # cache entries in the post (save) phase: keep at most the entry
+      # just saved and the one it was restored from.
+      - name: Restore Nix store
+        uses: mzwing/nix-config/.github/actions/restore-nix-store@master
+        with:
+          primary-key: nix-ci-${{ hashFiles('flake.lock', 'devenv.lock', 'go.mod', 'go.sum') }}
+          restore-prefix: nix-ci-
+          gc-max-store-size-linux: 4G
+
+      # Builds packages.default plus every flake check (fmt, lint,
+      # actionlint, toml-freshness and the offline end-to-end tests),
+      # pushing the full closure into the store cache in the post phase.
+      - name: Build everything
+        run: nix flake check --no-write-lock-file --print-build-logs
+
+      # Trim the store down to the build closure of the current lock
+      # (package plus all flake checks, which include the end-to-end
+      # tests) before the post-run cache save: the saved cache always
+      # matches the current lock instead of accumulating stale closures
+      # from previous locks until the gc size limit hits.
+      - name: Garbage-collect stale store paths
+        uses: mzwing/nix-config/.github/actions/gc-store-to-build-closure@master
+        with:
+          drvs-file: ci/drvs.nix
+          gcroots-name: gomod2nix-ci

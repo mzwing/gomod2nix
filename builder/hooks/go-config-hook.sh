@@ -80,6 +80,24 @@ goConfigHook() {
         fi
     fi
 
+    # Set up cache directories if goCacheDirs (plural) is provided.
+    # Each entry is a per-module cache derivation containing cache.tar.zst.
+    # GOCACHE is a content-addressed file store, so extracting multiple
+    # archives into it is a safe union operation: colliding paths have
+    # identical contents and extraction order does not matter.
+    if [ -n "${goCacheDirs-}" ]; then
+        for cacheDir in ${goCacheDirs}; do
+            if [ -f "$cacheDir/cache.tar.zst" ]; then
+                echo "Restoring Go build cache from $cacheDir/cache.tar.zst"
+                mkdir -p "$GOCACHE"
+                @zstd@ -d -c "$cacheDir/cache.tar.zst" | @tar@ -xf - -C "$GOCACHE"
+            fi
+        done
+        if [ -d "$GOCACHE" ]; then
+            chmod -R +w "$GOCACHE"
+        fi
+    fi
+
     # Set up exclude pattern for getGoDirs
     exclude='\(/_\|examples\|Godeps\|testdata'
     if [[ -n "$excludedPackages" ]]; then
