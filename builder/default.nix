@@ -749,14 +749,26 @@
     depFilesPath =
       if (!disableGoCache && modulesStruct != {} && depFilesSrc != null)
       then
-        lib.cleanSourceWith {
-          src = depFilesSrc;
-          filter = path: type: let
-            baseName = baseNameOf path;
-          in
-            baseName == "go.mod" || baseName == "go.sum" || baseName == "gomod2nix.toml";
-          name = "go-dep-files";
-        }
+        if lib.isDerivation depFilesSrc
+        then
+          # Derivation sources (the fetched module in goPackagePath
+          # mode, or a fetcher-produced src) are content-fixed, so
+          # filtering buys no cache granularity. Worse, filtering with
+          # cleanSourceWith (builtins.path) would read the directory at
+          # evaluation time, forcing realisation of the derivation -
+          # which breaks cross-platform evaluation when the output is
+          # not substitutable (platform mismatch). Reference it
+          # directly; go.mod/go.sum are copied at build time instead.
+          depFilesSrc
+        else
+          lib.cleanSourceWith {
+            src = depFilesSrc;
+            filter = path: type: let
+              baseName = baseNameOf path;
+            in
+              baseName == "go.mod" || baseName == "go.sum" || baseName == "gomod2nix.toml";
+            name = "go-dep-files";
+          }
       else null;
 
     # Per-module cache description emitted by schema version 4 generators
@@ -832,7 +844,10 @@
     # Legacy monolithic cache path, used for gomod2nix.toml files that
     # only carry cachePackages (schema version <= 3)
     cacheEnv =
-      if (!disableGoCache && modulesStruct != {} && depFilesPath != null && cacheModulesStruct == {})
+      # Check cacheModulesStruct before depFilesPath: schema >= 4
+      # packages never use the legacy cache, and forcing depFilesPath
+      # would instantiate the dep-files filtering for no reason.
+      if (!disableGoCache && modulesStruct != {} && cacheModulesStruct == {} && depFilesPath != null)
       then
         mkGoCacheEnv {
           inherit

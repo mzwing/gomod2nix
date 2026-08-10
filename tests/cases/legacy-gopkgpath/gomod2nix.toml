@@ -1,0 +1,15 @@
+schema = 3
+goPackagePath = 'example.com/tool'
+subPackages = ['cmd/tool']
+
+[mod]
+  [mod.'example.com/tool']
+    version = 'v1.0.0'
+    # Deliberately wrong hash: the fixed-output module fetch can never
+    # succeed, so any evaluation-time realisation of the module source
+    # fails right here.
+    hash = 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+
+cachePackages = [
+  'example.com/tool'
+]

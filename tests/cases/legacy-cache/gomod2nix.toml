@@ -1,0 +1,10 @@
+schema = 3
+
+[mod]
+  [mod.'example.com/depa']
+    version = 'v1.0.0'
+    hash = 'sha256-bKnP/tukmrbJjqmAlVEw1EqidPh7smHV6+d53aO6ZlA='
+
+cachePackages = [
+  'example.com/depa'
+]

@@ -152,6 +152,34 @@
     );
 
   lessThan = a: b: a < b;
+
+  # Probe derivation that can never be built. If the builder filtered a
+  # derivation source with builtins.path (cleanSourceWith) at evaluation
+  # time, Nix would try to realise this source while instantiating the
+  # package and evaluation would fail. After the fix, the source is only
+  # referenced (instantiation), never realised at evaluation time.
+  brokenSrc = runCommand "broken-src" {} ''false'';
+
+  # Legacy (schema <= 3, cachePackages) package whose src is a
+  # derivation: depFilesSrc falls back to src, which must be referenced
+  # directly instead of being filtered at evaluation time.
+  legacyForeignSrcPkg = buildGoApplication {
+    pname = "legacy-foreign-src";
+    version = "0.0.1";
+    src = brokenSrc;
+    modules = ./cases/legacy-cache/gomod2nix.toml;
+    goModuleProxy = proxyUrl;
+  };
+
+  # Legacy (schema <= 3) package in goPackagePath mode: the package
+  # source is the fetched module itself, a fixed-output derivation whose
+  # hash is deliberately wrong so the fetch can never succeed.
+  # Instantiating the package must still work: the module source may
+  # only be realised at build time, never during evaluation.
+  legacyGoPkgPathPkg = buildGoApplication {
+    modules = ./cases/legacy-gopkgpath/gomod2nix.toml;
+    goModuleProxy = proxyUrl;
+  };
 in {
   # Generator: basic project against the offline proxy.
   test-generate-basic = generateCheck {
@@ -213,4 +241,25 @@ in {
       bin = "testcache";
       expected = "hello from depa via depb";
     };
+
+  # Eval-only regression test: instantiating a legacy-cache package with
+  # a derivation src must not realise the source at evaluation time.
+  # Referencing .drvPath forces instantiation; brokenSrc can never be
+  # built, so any evaluation-time filtering would fail right here.
+  test-eval-legacy-foreign-src = assert (lib.assertMsg
+    (legacyForeignSrcPkg.drvPath != "")
+    "legacy-cache package with derivation src failed to instantiate");
+    runCommand "test-eval-legacy-foreign-src" {} ''
+      touch $out
+    '';
+
+  # Eval-only regression test: instantiating a goPackagePath-mode
+  # package must not realise the module fetch (fixed-output derivation)
+  # at evaluation time - the wrong hash makes any such attempt fail.
+  test-eval-legacy-gopkgpath-foreign-src = assert (lib.assertMsg
+    (legacyGoPkgPathPkg.drvPath != "")
+    "goPackagePath-mode package failed to instantiate");
+    runCommand "test-eval-legacy-gopkgpath-foreign-src" {} ''
+      touch $out
+    '';
 }
