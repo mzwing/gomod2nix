@@ -30,10 +30,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Nix
-        uses: mzwing/nix-config/.github/actions/setup-nix@master
+        uses: mzwing/nix-actions/nix/setup@master
         with:
           cachix-pull: 'false'
           install-devenv: 'true'
@@ -42,7 +42,7 @@ jobs:
       # family (nix-ci-) for both workflows. The key must hash the same
       # lock inputs and use the same gc size.
       - name: Restore Nix store
-        uses: mzwing/nix-config/.github/actions/restore-nix-store@master
+        uses: mzwing/nix-actions/nix/restore-store@master
         with:
           primary-key: nix-ci-${{ hashFiles('flake.lock', 'devenv.lock', 'go.mod', 'go.sum') }}
           restore-prefix: nix-ci-
