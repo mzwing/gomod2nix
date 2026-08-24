@@ -145,6 +145,15 @@
   moduleCacheA = mkModuleCacheBuild ./cases/module-cache;
   moduleCacheB = mkModuleCacheBuild moduleCacheSrcChanged;
 
+  # Module-level dependency cycle; wiring depCaches along every edge would make the cache derivations reference each other and evaluation would never terminate.
+  moduleCycleBuild = buildGoApplication {
+    pname = "testcycle";
+    version = "0.0.1";
+    src = ./cases/module-cycle;
+    modules = ./cases/module-cycle/gomod2nix.toml;
+    goModuleProxy = proxyUrl;
+  };
+
   cacheDrvPaths = build:
     lib.sort lessThan (
       map (drv: drv.drvPath) (lib.attrValues build.goModuleCacheEnvs)
@@ -239,6 +248,17 @@ in {
       name = "build-module-cache";
       drv = moduleCacheB;
       bin = "testcache";
+      expected = "hello from depa via depb";
+    };
+
+  # Builder: a cyclic module graph still instantiates and builds, and the cycle edges are dropped rather than the modules themselves.
+  test-build-module-cycle = assert (lib.assertMsg
+    (lib.length (lib.attrNames moduleCycleBuild.goModuleCacheEnvs) == 2)
+    "cycle handling dropped a module cache instead of an edge");
+    assertOutput {
+      name = "build-module-cycle";
+      drv = moduleCycleBuild;
+      bin = "testcycle";
       expected = "hello from depa via depb";
     };
 

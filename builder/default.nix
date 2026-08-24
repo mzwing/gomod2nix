@@ -783,8 +783,7 @@
         cacheModulesStruct.${modulePath}.deps or []
       );
 
-    # Transitive dependency closure of a module (including itself).
-    # The import-derived module graph is acyclic, so this terminates.
+    # Transitive dependency closure of a module (including itself); the walk memoises, so module-level cycles terminate.
     moduleClosure = root: let
       goMod' = m: acc:
         if builtins.hasAttr m acc
@@ -792,6 +791,14 @@
         else builtins.foldl' (a: d: goMod' d a) (acc // {${m} = true;}) (depsOf m);
     in
       builtins.attrNames (goMod' root {});
+
+    moduleClosures = mapAttrs (modulePath: _: moduleClosure modulePath) cacheModulesStruct;
+
+    # The module quotient graph is NOT acyclic: packages in `go.opentelemetry.io/otel` import `otel/metric` while packages in `otel/metric` import `otel`, which is legal because no *package* import cycle exists.
+    # Since an edge m -> d always puts d in m's closure, `m` being in d's closure means the two share a cycle, so this keeps exactly the edges that cross between strongly connected components and the cache derivations form a DAG.
+    # Modules inside a cycle then compile each other's packages into their own archive instead of restoring them.
+    cacheDepsOf = modulePath:
+      builtins.filter (dep: !(builtins.elem modulePath moduleClosures.${dep})) (depsOf modulePath);
 
     # Shared standard library base cache, restored by every module cache
     # derivation and the final build so std artifacts are built once per
@@ -810,10 +817,7 @@
         }
       else null;
 
-    # One cache derivation per Go module, forming a DAG that mirrors the
-    # module-level import graph. The module quotient graph is acyclic
-    # (package import cycles are compile errors), so this recursive
-    # attrset always terminates under Nix's lazy evaluation.
+    # One cache derivation per Go module, wired along the acyclic edge subset so this recursive attrset terminates under Nix's lazy evaluation.
     moduleCaches =
       if useModuleCache
       then
@@ -829,10 +833,10 @@
                 ;
               version = modulesStruct.mod.${modulePath}.version or "unknown";
               packages = cfg.packages or [];
-              depCaches = [stdCache] ++ map (dep: moduleCaches.${dep}) (depsOf modulePath);
+              depCaches = [stdCache] ++ map (dep: moduleCaches.${dep}) (cacheDepsOf modulePath);
               moduleContext = mkModuleContext {
                 inherit go modulePath modulesStruct;
-                closure = moduleClosure modulePath;
+                closure = moduleClosures.${modulePath};
                 sources = vendorEnv.passthru.sources;
               };
               CGO_ENABLED = attrs.CGO_ENABLED or go.CGO_ENABLED;
