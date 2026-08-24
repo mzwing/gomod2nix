@@ -123,6 +123,35 @@
     goModuleProxy = proxyUrl;
   };
 
+  # A package with its own buildPhase never runs goBuildHook, the only writer of $TMPDIR/buildFlagsArray.
+  # goCheckHook must still work; subPackages is what makes getGoDirs hand it a directory despite there being no test files.
+  customPhasesBuild = buildGoApplication {
+    pname = "testcustomphases";
+    version = "0.0.1";
+    src = ./cases/basic;
+    modules = ./cases/basic/gomod2nix.toml;
+    goModuleProxy = proxyUrl;
+
+    subPackages = ["."];
+    doCheck = true;
+
+    buildPhase = ''
+      runHook preBuild
+
+      go build -o testcustomphases .
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+
+      install -Dm755 testcustomphases -t $out/bin
+
+      runHook postInstall
+    '';
+  };
+
   # The module cache derivations must not depend on the application
   # sources: a source-only change rebuilds only the final derivation.
   # Compare drvPaths (instantiation-time, no builds needed) between the
@@ -234,6 +263,14 @@ in {
     drv = mkgoenvEnv;
     bin = "tool";
     expected = "tool says hi";
+  };
+
+  # Builder: overriding buildPhase and installPhase keeps checkPhase working.
+  test-build-custom-phases = assertOutput {
+    name = "build-custom-phases";
+    drv = customPhasesBuild;
+    bin = "testcustomphases";
+    expected = "hello from depa via depb";
   };
 
   # Builder: per-module cache DAG builds, and cache derivations are

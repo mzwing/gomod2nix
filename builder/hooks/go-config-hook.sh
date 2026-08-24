@@ -4,10 +4,14 @@
 buildGoDir() {
     local cmd="$1" dir="$2"
 
-    . "$TMPDIR/buildFlagsArray"
+    # goBuildHook is the only writer of this file, so it is absent whenever the package brings its own buildPhase.
+    if [ -f "$TMPDIR/buildFlagsArray" ]; then
+        . "$TMPDIR/buildFlagsArray"
+    fi
 
     declare -a flags
-    flags+=($buildFlags "${buildFlagsArray[@]}")
+    # `set -u` makes expanding a never-declared buildFlagsArray fatal.
+    flags+=($buildFlags ${buildFlagsArray[@]+"${buildFlagsArray[@]}"})
     flags+=(${tags:+-tags=${tags}})
     flags+=(${ldflags:+-ldflags="$ldflags"})
     flags+=("-v" "-p" "$NIX_BUILD_CORES")
