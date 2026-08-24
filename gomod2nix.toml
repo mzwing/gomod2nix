@@ -18,16 +18,16 @@ schema = 4
     hash = 'sha256-nbRCTFiDCC2jKK7AHi79n7urYCMP5yDZnWtNVJrDi+k='
 
   [mod.'github.com/spf13/pflag']
-    version = 'v1.0.9'
-    hash = 'sha256-YAjyYpq5BXCosVJtvYLWFG1t4gma2ylzc7ILLoj/hD8='
+    version = 'v1.0.10'
+    hash = 'sha256-uDPnWjHpSrzXr17KEYEA1yAbizfcsfo5AyztY2tS6ZU='
 
   [mod.'github.com/stretchr/testify']
     version = 'v1.10.0'
     hash = 'sha256-fJ4gnPr0vnrOhjQYQwJ3ARDKPsOtA7d4olQmQWR+wpI='
 
   [mod.'golang.org/x/mod']
-    version = 'v0.38.0'
-    hash = 'sha256-BpKfvsmb7ecEDvTBKx9ZHauxoWRkOAZCqg4BrHM2/S0='
+    version = 'v0.40.0'
+    hash = 'sha256-gmuKtxidzYWVlQYNB/8BREmajyfockaQ5/6Xk4IR32A='
 
   [mod.'golang.org/x/sync']
     version = 'v0.22.0'
