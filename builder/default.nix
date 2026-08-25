@@ -1,8 +1,6 @@
 {
-  buildEnv,
   buildPackages,
   cacert,
-  fetchgit,
   git,
   gnutar,
   gomod2nix,
@@ -78,7 +76,7 @@
     symlink = mkInternalPkg "symlink" ./symlink/symlink.go;
 
     # Install development dependencies from tools.go
-    install = mkInternalPkg "symlink" ./install/install.go;
+    install = mkInternalPkg "install" ./install/install.go;
 
     # Generate dummy import file for cache warming
     cachegen = mkInternalPkg "cachegen" ./cachegen/cachegen.go;
@@ -181,12 +179,22 @@
       mv vendor $out
     '';
 
-  mkGoCacheEnv = {
+  # A derivation whose output is $out/cache.tar.zst: a zstd-compressed
+  # GOCACHE holding the compiled artifacts of `packages`, or of the Go
+  # standard library when `packages` is null.
+  #
+  # The caches listed in depCaches are restored before building, and only
+  # the entries this derivation itself created are archived. Every cache is
+  # therefore disjoint, so identical artifacts are never duplicated across
+  # the Nix store when several archives are restored side by side.
+  mkCacheArchive = {
+    name,
     go,
-    modulesStruct,
-    goMod,
-    vendorEnv,
-    depFilesPath,
+    # Shell snippet run in an empty source directory; must produce go.mod.
+    setupModule,
+    vendorDir ? "",
+    packages ? null,
+    depCaches ? [],
     # Build environment parameters (should match buildGoApplication)
     nativeBuildInputs ? [],
     buildInputs ? [],
@@ -194,19 +202,14 @@
     tags ? [],
     ldflags ? [],
     allowGoReference ? false,
-  }: let
-    # Check if cachePackages is defined in modulesStruct
-    cachePackages = modulesStruct.cachePackages or [];
-    hasCachePackages = cachePackages != [];
-  in
+  }:
     stdenv.mkDerivation {
-      name = "go-cache-env";
+      inherit name;
 
       dontUnpack = true;
 
       nativeBuildInputs =
         [
-          rsync
           go
           goConfigHook
           gnutar
@@ -225,66 +228,108 @@
         then "1"
         else "";
 
-      # Pass tags and ldflags (used by hooks)
+      # Pass tags and ldflags (used by hooks / buildPhase)
       inherit tags ldflags;
 
-      goVendorDir = vendorEnv;
+      goVendorDir = vendorDir;
+      goCacheDirs = depCaches;
 
-      # Change the working directory in prePatch so GoConfigHook sets up
-      # vendor/ at the right location
+      # Change the working directory in prePatch so goConfigHook sets up
+      # vendor/ at the right location. Go ignores a go.mod left in /build.
       prePatch = ''
-        # Create a working directory (Go ignores go.mod in /build)
         mkdir -p source
         cd source
 
-        # Copy go.mod and go.sum from filtered source
-        cp ${depFilesPath}/go.mod ./go.mod
-        cp ${depFilesPath}/go.sum ./go.sum 2>/dev/null || touch go.sum
+        ${setupModule}
+
+        # go.sum is not consulted in -mod=vendor builds, but the go command
+        # still expects the file to exist.
+        touch go.sum
       '';
 
       configurePhase = ''
         # Set up GOCACHE directory (will compress to $out later)
         mkdir -p "$GOCACHE"
+
+        # Mark the point in time after the dependency caches were restored
+        # (goConfigHook runs in postPatch, i.e. before configurePhase).
+        # Only cache entries newer than this marker were created by this
+        # derivation and end up in the output archive.
+        touch "$TMPDIR/.cache-marker"
       '';
 
-      buildPhase = ''
-        runHook preBuild
+      buildPhase =
+        ''
+          runHook preBuild
 
-        ${
-          if hasCachePackages
+          goFlags
+        ''
+        + (
+          if packages == null
           then ''
-            echo "Building ${toString (builtins.length cachePackages)} packages to populate cache..."
+            echo "Building the Go standard library to populate the cache..."
 
-            # Generate cache.go that imports all packages
-            printf '%s\n' ${lib.escapeShellArgs cachePackages} | ${internal.cachegen} > cache.go
+            go build -v "''${goFlagsArray[@]}" std || true
+          ''
+          else ''
+            echo "Building ${toString (builtins.length packages)} packages to populate the cache..."
+
+            # Generate a cache.go that blank-imports every package, and let
+            # the Go scheduler build them. Dependency and standard library
+            # artifacts are served from the restored caches, so only this
+            # module's own packages are actually compiled.
+            printf '%s\n' ${lib.escapeShellArgs packages} | ${internal.cachegen} > cache.go
 
             cat cache.go
 
-            # Build cache.go - Go will build all dependencies using its scheduler
-            go build -v -mod=vendor cache.go || true
-
-            echo "Cache population complete"
+            go build -v "''${goFlagsArray[@]}" cache.go || true
           ''
-          else ''
-            echo "No cache packages defined, skipping cache population"
-          ''
-        }
+        )
+        + ''
 
-        runHook postBuild
-      '';
+          echo "Cache population complete"
+
+          runHook postBuild
+        '';
 
       installPhase = ''
         runHook preInstall
 
-        echo "Compressing Go build cache..."
+        echo "Compressing Go build cache (entries created by this derivation only)..."
         mkdir -p "$out"
-        tar -cf - -C "$GOCACHE" . | zstd -T$NIX_BUILD_CORES -o "$out/cache.tar.zst"
+        cd "$GOCACHE"
+
+        find . -type f -newer "$TMPDIR/.cache-marker" -print > "$TMPDIR/new-cache-files"
+        tar -cf - -T "$TMPDIR/new-cache-files" | zstd -T$NIX_BUILD_CORES -o "$out/cache.tar.zst"
 
         echo "Cache compressed to $out/cache.tar.zst"
 
         runHook postInstall
       '';
     };
+
+  # Legacy monolithic cache for gomod2nix.toml files that carry a flat
+  # cachePackages list (schema version <= 3).
+  mkGoCacheEnv = {
+    go,
+    cachePackages,
+    vendorEnv,
+    depFilesPath,
+    ...
+  } @ args:
+    mkCacheArchive (
+      removeAttrs args [
+        "cachePackages"
+        "vendorEnv"
+        "depFilesPath"
+      ]
+      // {
+        name = "go-cache-env";
+        packages = cachePackages;
+        vendorDir = vendorEnv;
+        setupModule = "cp ${depFilesPath}/go.mod ./go.mod";
+      }
+    );
 
   # Pre-compile the Go standard library into a GOCACHE archive.
   #
@@ -294,84 +339,23 @@
   # store) its own copy of the std packages it needs, causing massive
   # duplication across the Nix store. All module cache derivations (and
   # the final build) restore this shared base cache instead.
-  mkGoStdCacheEnv = {
-    go,
-    CGO_ENABLED ? go.CGO_ENABLED,
-    tags ? [],
-    ldflags ? [],
-    allowGoReference ? false,
-  }: let
-    goModText = ''
-      module gomod2nix.invalid/std
-
-      go ${lib.versions.majorMinor go.version}
-    '';
-  in
-    stdenv.mkDerivation {
-      name = "go-std-cache-${go.version}-${go.GOOS}-${go.GOARCH}";
-
-      dontUnpack = true;
-
-      nativeBuildInputs = [
-        go
-        goConfigHook
-        gnutar
-        zstd
-      ];
-
-      inherit (go) GOOS GOARCH;
-      inherit CGO_ENABLED;
-
-      # Pass allowGoReference to hook for GOFLAGS configuration
-      allowGoReference =
-        if allowGoReference
-        then "1"
-        else "";
-
-      # Pass tags and ldflags (used by hooks / buildPhase)
-      inherit tags ldflags;
-
-      prePatch = ''
-        # Create a working directory with a minimal main module context.
+  mkGoStdCacheEnv = {go, ...} @ args:
+    mkCacheArchive (
+      args
+      // {
+        name = "go-std-cache-${go.version}-${go.GOOS}-${go.GOARCH}";
         # The (empty) vendor directory is needed because goConfigHook sets
         # -mod=vendor in GOFLAGS.
-        mkdir -p source
-        cd source
+        setupModule = ''
+          printf '%s\n' ${lib.escapeShellArg ''
+            module gomod2nix.invalid/std
 
-        printf '%s\n' ${lib.escapeShellArg goModText} > go.mod
-        touch go.sum
-        mkdir vendor
-      '';
-
-      configurePhase = ''
-        # Set up GOCACHE directory (will compress to $out later)
-        mkdir -p "$GOCACHE"
-      '';
-
-      buildPhase = ''
-        runHook preBuild
-
-        echo "Building Go standard library to populate cache..."
-
-        go build -v -mod=vendor ''${tags:+-tags=''${tags}} ''${ldflags:+-ldflags="''${ldflags}"} std || true
-
-        echo "Std cache population complete"
-
-        runHook postBuild
-      '';
-
-      installPhase = ''
-        runHook preInstall
-
-        echo "Compressing Go build cache..."
-        mkdir -p "$out"
-        tar -cf - -C "$GOCACHE" . | zstd -T$NIX_BUILD_CORES -o "$out/cache.tar.zst"
-
-        echo "Cache compressed to $out/cache.tar.zst"
-
-        runHook postInstall
-      '';
-    };
+            go ${lib.versions.majorMinor go.version}
+          ''} > go.mod
+          mkdir vendor
+        '';
+      }
+    );
 
   # Create an isolated build context (vendor tree + synthetic go.mod) for a
   # single Go module and its transitive dependency closure.
@@ -445,126 +429,27 @@
       printf '%s\n' ${lib.escapeShellArg goModText} > $out/go.mod
     '';
 
-  # Build the packages of a single Go module into a GOCACHE archive.
-  #
-  # Caches of this module's dependency modules (depCaches) are restored
-  # before building, so only this module's own packages are actually
-  # compiled. The output archive contains only cache entries created by
-  # this derivation, keeping every per-module cache disjoint so identical
-  # dependency artifacts are not duplicated across the Nix store.
+  # Build the packages of a single Go module into a GOCACHE archive, using
+  # the isolated build context produced by mkModuleContext.
   mkModuleCacheEnv = {
-    go,
     modulePath,
     version,
-    packages,
-    depCaches ? [],
     moduleContext,
-    # Build environment parameters (should match buildGoApplication)
-    nativeBuildInputs ? [],
-    buildInputs ? [],
-    CGO_ENABLED ? go.CGO_ENABLED,
-    tags ? [],
-    ldflags ? [],
-    allowGoReference ? false,
-  }: let
-    # Store paths / derivation names cannot contain "/"
-    safeName = builtins.replaceStrings ["/"] ["-"] modulePath;
-  in
-    stdenv.mkDerivation {
-      name = "go-cache-${safeName}-${stripVersion version}";
-
-      dontUnpack = true;
-
-      nativeBuildInputs =
-        [
-          rsync
-          go
-          goConfigHook
-          gnutar
-          zstd
-        ]
-        ++ nativeBuildInputs;
-
-      inherit buildInputs;
-
-      inherit (go) GOOS GOARCH;
-      inherit CGO_ENABLED;
-
-      # Pass allowGoReference to hook for GOFLAGS configuration
-      allowGoReference =
-        if allowGoReference
-        then "1"
-        else "";
-
-      # Pass tags and ldflags (used by hooks)
-      inherit tags ldflags;
-
-      goVendorDir = moduleContext + "/vendor";
-
-      # Per-module caches of this module's dependencies, restored into
-      # GOCACHE by goConfigHook before building.
-      goCacheDirs = depCaches;
-
-      # Change the working directory in prePatch so GoConfigHook sets up
-      # vendor/ at the right location
-      prePatch = ''
-        # Create a working directory (Go ignores go.mod in /build)
-        mkdir -p source
-        cd source
-
-        # Copy the synthetic go.mod from the isolated module context
-        cp ${moduleContext}/go.mod ./go.mod
-        touch go.sum
-      '';
-
-      configurePhase = ''
-        # Set up GOCACHE directory (will compress to $out later)
-        mkdir -p "$GOCACHE"
-
-        # Mark the point in time after dependency caches were restored
-        # (goConfigHook runs in postPatch, i.e. before configurePhase).
-        # Only cache entries newer than this marker were created by this
-        # derivation and end up in the output archive.
-        touch "$TMPDIR/.cache-marker"
-      '';
-
-      buildPhase = ''
-        runHook preBuild
-
-        echo "Building ${toString (builtins.length packages)} packages from ${modulePath} to populate cache..."
-
-        # Generate cache.go that imports all packages of this module
-        printf '%s\n' ${lib.escapeShellArgs packages} | ${internal.cachegen} > cache.go
-
-        cat cache.go
-
-        # Build cache.go - Go will build all dependencies using its scheduler.
-        # Dependency and std library artifacts are served from the restored
-        # caches, so only this module's own packages are actually compiled.
-        # tags/ldflags are passed with the same expansion semantics as
-        # buildGoDir so cache keys match the final build.
-        go build -v -mod=vendor ''${tags:+-tags=''${tags}} ''${ldflags:+-ldflags="''${ldflags}"} cache.go || true
-
-        echo "Cache population complete"
-
-        runHook postBuild
-      '';
-
-      installPhase = ''
-        runHook preInstall
-
-        echo "Compressing Go build cache (entries created by this derivation only)..."
-        mkdir -p "$out"
-        cd "$GOCACHE"
-
-        find . -type f -newer "$TMPDIR/.cache-marker" -print > "$TMPDIR/new-cache-files"
-        tar -cf - -T "$TMPDIR/new-cache-files" | zstd -T$NIX_BUILD_CORES -o "$out/cache.tar.zst"
-
-        echo "Cache compressed to $out/cache.tar.zst"
-
-        runHook postInstall
-      '';
-    };
+    ...
+  } @ args:
+    mkCacheArchive (
+      removeAttrs args [
+        "modulePath"
+        "version"
+        "moduleContext"
+      ]
+      // {
+        # Store paths / derivation names cannot contain "/"
+        name = "go-cache-${builtins.replaceStrings ["/"] ["-"] modulePath}-${stripVersion version}";
+        vendorDir = moduleContext + "/vendor";
+        setupModule = "cp ${moduleContext}/go.mod ./go.mod";
+      }
+    );
 
   # Return a Go attribute and error out if the Go version is older than was specified in go.mod.
   selectGo = attrs: goMod:
@@ -774,8 +659,7 @@
     # Per-module cache description emitted by schema version 4 generators
     cacheModulesStruct = modulesStruct.cacheModules or {};
 
-    useModuleCache =
-      !disableGoCache && modulesStruct != {} && vendorEnv != null && cacheModulesStruct != {};
+    useModuleCache = !disableGoCache && vendorEnv != null && cacheModulesStruct != {};
 
     # Module-level dependency edges, restricted to modules that are cached
     depsOf = modulePath:
@@ -785,12 +669,12 @@
 
     # Transitive dependency closure of a module (including itself); the walk memoises, so module-level cycles terminate.
     moduleClosure = root: let
-      goMod' = m: acc:
+      walk = m: acc:
         if builtins.hasAttr m acc
         then acc
-        else builtins.foldl' (a: d: goMod' d a) (acc // {${m} = true;}) (depsOf m);
+        else builtins.foldl' (a: d: walk d a) (acc // {${m} = true;}) (depsOf m);
     in
-      builtins.attrNames (goMod' root {});
+      builtins.attrNames (walk root {});
 
     moduleClosures = mapAttrs (modulePath: _: moduleClosure modulePath) cacheModulesStruct;
 
@@ -846,17 +730,19 @@
       else {};
 
     # Legacy monolithic cache path, used for gomod2nix.toml files that
-    # only carry cachePackages (schema version <= 3)
+    # only carry cachePackages (schema version <= 3). Schema >= 4 packages
+    # describe their cache in cacheModules instead, and a toml carrying
+    # neither has nothing to pre-compile - in both cases building the
+    # derivation (and forcing depFilesPath) would be pure overhead.
+    cachePackages = modulesStruct.cachePackages or [];
+
     cacheEnv =
-      # Check cacheModulesStruct before depFilesPath: schema >= 4
-      # packages never use the legacy cache, and forcing depFilesPath
-      # would instantiate the dep-files filtering for no reason.
-      if (!disableGoCache && modulesStruct != {} && cacheModulesStruct == {} && depFilesPath != null)
+      if (!disableGoCache && cacheModulesStruct == {} && cachePackages != [] && depFilesPath != null)
       then
         mkGoCacheEnv {
           inherit
             go
-            modulesStruct
+            cachePackages
             vendorEnv
             depFilesPath
             tags
@@ -864,10 +750,6 @@
             allowGoReference
             ;
           CGO_ENABLED = attrs.CGO_ENABLED or go.CGO_ENABLED;
-          goMod =
-            if goMod != null
-            then goMod
-            else {replace = {};};
         }
       else null;
 
@@ -908,14 +790,10 @@
           if vendorEnv != null
           then vendorEnv
           else "";
-        goCacheDir =
-          if cacheEnv != null
-          then cacheEnv
-          else "";
         goCacheDirs =
           if useModuleCache
           then [stdCache] ++ builtins.attrValues moduleCaches
-          else [];
+          else optional (cacheEnv != null) cacheEnv;
         inherit tags ldflags;
         modRoot = attrs.modRoot or "";
 
@@ -957,11 +835,6 @@ in {
   inherit
     buildGoApplication
     mkGoEnv
-    mkVendorEnv
-    mkGoCacheEnv
-    mkGoStdCacheEnv
-    mkModuleCacheEnv
-    mkModuleContext
     hooks
     ;
 }

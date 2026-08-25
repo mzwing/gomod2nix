@@ -28,17 +28,16 @@ external Go module to its packages and module-level dependency edges
 (derived from actual package imports, hence acyclic).
 `buildGoApplication` then creates one cache derivation per module:
 
-- Each module gets an isolated build context (`mkModuleContext`): a vendor
-  tree containing only its transitive dependency closure plus a synthetic
-  `go.mod`. Contexts depend only on module sources/versions and the Go
-  toolchain - never on the project's `go.mod`/`go.sum` - so identical
-  closures produce identical store paths across projects.
-- Every module cache derivation (`mkModuleCacheEnv`) restores a shared
-  standard-library cache (`mkGoStdCacheEnv`, one per
-  toolchain/GOOS/GOARCH/CGO/tags configuration) plus the caches of its
-  dependency modules, compiles only its own packages, and archives only
-  the cache entries it created. GOCACHE is content-addressed, so merging
-  archives by extraction is a safe union operation.
+- Each module gets an isolated build context: a vendor tree containing
+  only its transitive dependency closure plus a synthetic `go.mod`.
+  Contexts depend only on module sources/versions and the Go toolchain -
+  never on the project's `go.mod`/`go.sum` - so identical closures produce
+  identical store paths across projects.
+- Every module cache derivation restores a shared standard-library cache
+  (one per toolchain/GOOS/GOARCH/CGO/tags configuration) plus the caches
+  of its dependency modules, compiles only its own packages, and archives
+  only the cache entries it created. GOCACHE is content-addressed, so
+  merging archives by extraction is a safe union operation.
 - The final build restores the std cache and all module caches and only
   compiles the project's own packages.
 
@@ -52,12 +51,13 @@ Useful `passthru` attributes for debugging or pushing to a binary cache:
 
 - **goModuleCacheEnvs** Attrset mapping module path -> cache derivation.
 - **goStdCacheEnv** The shared standard-library cache derivation.
-- **goCacheEnv** The legacy monolithic cache derivation (only set when the
-  `gomod2nix.toml` carries no `cacheModules` section, e.g. schema <= 3
-  with `cachePackages`).
+- **goCacheEnv** The legacy monolithic cache derivation (only set for
+  `gomod2nix.toml` files that carry a flat `cachePackages` list, i.e.
+  schema <= 3).
 
 Legacy `gomod2nix.toml` files (schema <= 3, flat `cachePackages` list)
-continue to use the previous monolithic cache derivation unchanged.
+continue to use the previous monolithic cache derivation. A
+`gomod2nix.toml` with neither section builds no cache derivation at all.
 
 ### mkGoEnv
 

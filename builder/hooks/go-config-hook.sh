@@ -1,5 +1,22 @@
 # shellcheck shell=bash disable=SC2154
 
+# Assemble the tag/ldflag arguments into goFlagsArray. Every `go` invocation
+# in every derivation must use these, otherwise the cache-priming builds and
+# the final build compute different cache keys and the caches are ignored.
+#
+# `tags` arrives space-separated from the Nix list, but `go` wants one
+# comma-separated argument; leaving the spaces in would split the rest of the
+# tags into import paths.
+goFlags() {
+    goFlagsArray=()
+    if [ -n "${tags:-}" ]; then
+        goFlagsArray+=("-tags=${tags// /,}")
+    fi
+    if [ -n "${ldflags:-}" ]; then
+        goFlagsArray+=("-ldflags=$ldflags")
+    fi
+}
+
 # Shared functions used by build and check hooks
 buildGoDir() {
     local cmd="$1" dir="$2"
@@ -9,11 +26,12 @@ buildGoDir() {
         . "$TMPDIR/buildFlagsArray"
     fi
 
+    goFlags
+
     declare -a flags
     # `set -u` makes expanding a never-declared buildFlagsArray fatal.
     flags+=($buildFlags ${buildFlagsArray[@]+"${buildFlagsArray[@]}"})
-    flags+=(${tags:+-tags=${tags}})
-    flags+=(${ldflags:+-ldflags="$ldflags"})
+    flags+=("${goFlagsArray[@]}")
     flags+=("-v" "-p" "$NIX_BUILD_CORES")
 
     if [ "$cmd" = "test" ]; then
@@ -67,39 +85,23 @@ goConfigHook() {
 
     # Set up vendor directory if goVendorDir is provided
     if [ -n "${goVendorDir-}" ]; then
-        if [ -n "${goVendorDir}" ]; then
-            echo "Setting up vendor directory from ${goVendorDir}"
-            rm -rf vendor
-            @rsync@ -a -K --ignore-errors "${goVendorDir}"/ vendor
-        fi
+        echo "Setting up vendor directory from ${goVendorDir}"
+        rm -rf vendor
+        @rsync@ -a -K --ignore-errors "${goVendorDir}"/ vendor
     fi
 
-    # Set up cache directory if goCacheDir is provided
-    if [ -n "${goCacheDir-}" ]; then
-        if [ -n "${goCacheDir}" ] && [ -f "${goCacheDir}/cache.tar.zst" ]; then
-            echo "Restoring Go build cache from ${goCacheDir}/cache.tar.zst"
-            mkdir -p "$GOCACHE"
-            @zstd@ -d -c "${goCacheDir}/cache.tar.zst" | @tar@ -xf - -C "$GOCACHE"
-            chmod -R +w "$GOCACHE"
-        fi
-    fi
-
-    # Set up cache directories if goCacheDirs (plural) is provided.
-    # Each entry is a per-module cache derivation containing cache.tar.zst.
-    # GOCACHE is a content-addressed file store, so extracting multiple
-    # archives into it is a safe union operation: colliding paths have
-    # identical contents and extraction order does not matter.
+    # Restore the build caches listed in goCacheDirs. Each entry is a cache
+    # derivation containing cache.tar.zst. GOCACHE is a content-addressed file
+    # store, so extracting multiple archives into it is a safe union
+    # operation: colliding paths have identical contents and extraction order
+    # does not matter.
     if [ -n "${goCacheDirs-}" ]; then
         for cacheDir in ${goCacheDirs}; do
-            if [ -f "$cacheDir/cache.tar.zst" ]; then
-                echo "Restoring Go build cache from $cacheDir/cache.tar.zst"
-                mkdir -p "$GOCACHE"
-                @zstd@ -d -c "$cacheDir/cache.tar.zst" | @tar@ -xf - -C "$GOCACHE"
-            fi
+            echo "Restoring Go build cache from $cacheDir/cache.tar.zst"
+            mkdir -p "$GOCACHE"
+            @zstd@ -d -c "$cacheDir/cache.tar.zst" | @tar@ -xf - -C "$GOCACHE"
         done
-        if [ -d "$GOCACHE" ]; then
-            chmod -R +w "$GOCACHE"
-        fi
+        chmod -R +w "$GOCACHE"
     fi
 
     # Set up exclude pattern for getGoDirs

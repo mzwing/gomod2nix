@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,19 +38,41 @@ func sourceFilter(name string, nodeType nar.NodeType) bool {
 	return strings.ToLower(filepath.Base(name)) != ".ds_store"
 }
 
-func common(directory string) ([]*goModDownload, map[string]string, error) {
+// runGo runs a go subcommand in directory and returns its stdout. Stderr is
+// folded into the error because exec.ExitError does not carry it.
+func runGo(directory string, args ...string) ([]byte, error) {
+	cmd := exec.Command("go", args...)
+	cmd.Dir = directory
+
+	stdout, err := cmd.Output()
+	if err != nil {
+		var exiterr *exec.ExitError
+		if errors.As(err, &exiterr) {
+			return nil, fmt.Errorf("failed to run 'go %s': %w\n%s", strings.Join(args, " "), err, exiterr.Stderr)
+		}
+
+		return nil, fmt.Errorf("failed to run 'go %s': %w", strings.Join(args, " "), err)
+	}
+
+	return stdout, nil
+}
+
+// parseGoMod reads and parses the go.mod of a project directory.
+func parseGoMod(directory string) (*modfile.File, error) {
 	goModPath := filepath.Join(directory, "go.mod")
 
 	slog.Info("Parsing go.mod", "modPath", goModPath)
 
-	// Read go.mod
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Parse go.mod
-	mod, err := modfile.Parse(goModPath, data, nil)
+	return modfile.Parse(goModPath, data, nil)
+}
+
+func common(directory string) ([]*goModDownload, map[string]string, error) {
+	mod, err := parseGoMod(directory)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -64,25 +87,20 @@ func common(directory string) ([]*goModDownload, map[string]string, error) {
 	{
 		slog.Info("Downloading dependencies")
 
-		cmd := exec.Command(
-			"go", "mod", "download", "--json",
-		)
-		cmd.Dir = directory
-		stdout, err := cmd.Output()
+		stdout, err := runGo(directory, "mod", "download", "--json")
 		if err != nil {
-			if exiterr, ok := err.(*exec.ExitError); ok {
-				return nil, nil, fmt.Errorf("failed to run 'go mod download --json: %s\n%s", exiterr, exiterr.Stderr)
-			} else {
-				return nil, nil, fmt.Errorf("failed to run 'go mod download --json': %s", err)
-			}
+			return nil, nil, err
 		}
 
 		dec := json.NewDecoder(bytes.NewReader(stdout))
 		for {
 			var dl *goModDownload
-			err := dec.Decode(&dl)
-			if err == io.EOF {
-				break
+			if err := dec.Decode(&dl); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+
+				return nil, nil, fmt.Errorf("failed to parse 'go mod download --json' output: %w", err)
 			}
 			modDownloads = append(modDownloads, dl)
 		}
@@ -124,8 +142,7 @@ builtins.filterSource (name: type: baseNameOf name != ".DS_Store") (
 			cmd.Stderr = os.Stderr
 
 			if err := cmd.Run(); err != nil {
-				fmt.Println(cmd)
-				return err
+				return fmt.Errorf("failed to import %s into the Nix store: %w", dl.Dir, err)
 			}
 
 			return nil
@@ -204,88 +221,6 @@ func GeneratePkgs(directory string, goMod2NixPath string, numWorkers int) ([]*sc
 	})
 
 	return packages, nil
-}
-
-// GenerateCacheDeps generates a list of all imported packages
-// (excluding standard library and the current module's packages) for cache optimization.
-func GenerateCacheDeps(directory string) ([]string, error) {
-	goModPath := filepath.Join(directory, "go.mod")
-
-	slog.Info("Parsing go.mod to get current module path")
-
-	// Read and parse go.mod to get current module path
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read go.mod: %w", err)
-	}
-
-	mod, err := modfile.Parse(goModPath, data, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
-	}
-
-	currentModule := mod.Module.Mod.Path
-
-	slog.Debug("Generating cache dependencies", "currentModule", currentModule)
-
-	// Run go list to get all imported packages
-	cmd := exec.Command("go", "list", "-mod=readonly", "-f", "{{.ImportPath}}", "all")
-	cmd.Dir = directory
-	stdout, err := cmd.Output()
-	if err != nil {
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("failed to run 'go list': %s\n%s", exiterr, exiterr.Stderr)
-		}
-		return nil, fmt.Errorf("failed to run 'go list': %w", err)
-	}
-
-	// Parse and filter packages
-	lines := strings.Split(string(stdout), "\n")
-	var filteredPackages []string
-	seen := make(map[string]bool)
-
-	for _, line := range lines {
-		pkg := strings.TrimSpace(line)
-		if pkg == "" {
-			continue
-		}
-
-		// Skip standard library
-		if pkg == "std" {
-			continue
-		}
-
-		// Skip current module packages
-		if pkg == currentModule || strings.HasPrefix(pkg, currentModule+"/") {
-			continue
-		}
-
-		// Skip vendor packages
-		if strings.HasPrefix(pkg, "vendor/") {
-			continue
-		}
-
-		// Skip internal packages (cannot be imported from outside)
-		if strings.Contains(pkg, "/internal") {
-			continue
-		}
-
-		// Keep only external packages (contain '.')
-		if !strings.Contains(pkg, ".") {
-			continue
-		}
-
-		// Deduplicate
-		if !seen[pkg] {
-			seen[pkg] = true
-			filteredPackages = append(filteredPackages, pkg)
-		}
-	}
-
-	// Sort for determinism
-	sort.Strings(filteredPackages)
-
-	return filteredPackages, nil
 }
 
 // listedPackage is a single package as reported by `go list`: the module it
@@ -483,19 +418,9 @@ func computeCacheModules(listed map[string]*listedPackage, currentModule string,
 // from actual package imports. The resulting module graph is guaranteed to
 // be acyclic because package-level import cycles are compile errors in Go.
 func GenerateCacheModules(directory string) (map[string]*schema.CacheModule, error) {
-	goModPath := filepath.Join(directory, "go.mod")
-
-	slog.Info("Parsing go.mod to get current module path and local replaces")
-
-	// Read and parse go.mod to get current module path
-	data, err := os.ReadFile(goModPath)
+	mod, err := parseGoMod(directory)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read go.mod: %w", err)
-	}
-
-	mod, err := modfile.Parse(goModPath, data, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
+		return nil, err
 	}
 
 	currentModule := mod.Module.Mod.Path
@@ -515,18 +440,13 @@ func GenerateCacheModules(directory string) (map[string]*schema.CacheModule, err
 
 	// Run go list to get all imported packages, their owning module and
 	// their direct imports in a single invocation.
-	cmd := exec.Command(
-		"go", "list", "-mod=readonly",
+	stdout, err := runGo(directory,
+		"list", "-mod=readonly",
 		"-f", "{{.ImportPath}}\u001f{{if .Module}}{{.Module.Path}}{{end}}\u001f{{join .Imports \",\"}}",
 		"all",
 	)
-	cmd.Dir = directory
-	stdout, err := cmd.Output()
 	if err != nil {
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("failed to run 'go list': %s\n%s", exiterr, exiterr.Stderr)
-		}
-		return nil, fmt.Errorf("failed to run 'go list': %w", err)
+		return nil, err
 	}
 
 	// Record every package and the module it belongs to. This includes

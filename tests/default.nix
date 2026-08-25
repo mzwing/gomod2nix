@@ -174,6 +174,22 @@
   moduleCacheA = mkModuleCacheBuild ./cases/module-cache;
   moduleCacheB = mkModuleCacheBuild moduleCacheSrcChanged;
 
+  # Several build tags have to reach the compiler as one comma-separated argument.
+  # Space-separated they would spill out of `-tags=` into `go build`'s import path list.
+  # The case carries a cacheModules toml so the two cache builders see the tags as well.
+  buildTagsBuild = buildGoApplication {
+    pname = "testtags";
+    version = "0.0.1";
+    src = ./cases/build-tags;
+    modules = ./cases/build-tags/gomod2nix.toml;
+    goModuleProxy = proxyUrl;
+
+    tags = [
+      "tag_one"
+      "tag_two"
+    ];
+  };
+
   # Module-level dependency cycle; wiring depCaches along every edge would make the cache derivations reference each other and evaluation would never terminate.
   moduleCycleBuild = buildGoApplication {
     pname = "testcycle";
@@ -184,12 +200,10 @@
   };
 
   cacheDrvPaths = build:
-    lib.sort lessThan (
+    lib.sort builtins.lessThan (
       map (drv: drv.drvPath) (lib.attrValues build.goModuleCacheEnvs)
       ++ [build.goStdCacheEnv.drvPath]
     );
-
-  lessThan = a: b: a < b;
 
   # Probe derivation that can never be built. If the builder filtered a
   # derivation source with builtins.path (cleanSourceWith) at evaluation
@@ -287,6 +301,15 @@ in {
       bin = "testcache";
       expected = "hello from depa via depb";
     };
+
+  # Builder: every build tag reaches the compiler, and none of them leaks into the
+  # import path list. `[untagged]` means one of the two tags never arrived.
+  test-build-tags = assertOutput {
+    name = "build-tags";
+    drv = buildTagsBuild;
+    bin = "testtags";
+    expected = "hello from depa via depb [tagged]";
+  };
 
   # Builder: a cyclic module graph still instantiates and builds, and the cycle edges are dropped rather than the modules themselves.
   test-build-module-cycle = assert (lib.assertMsg

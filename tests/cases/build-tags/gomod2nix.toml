@@ -1,0 +1,24 @@
+schema = 4
+
+[mod]
+  [mod.'example.com/depa']
+    version = 'v1.0.0'
+    hash = 'sha256-bKnP/tukmrbJjqmAlVEw1EqidPh7smHV6+d53aO6ZlA='
+
+  [mod.'example.com/depb']
+    version = 'v1.0.0'
+    hash = 'sha256-u3KreirPKog3mmaW3Q/OBDU6y0T/frlKVj74OWG0xfg='
+
+[cacheModules]
+  [cacheModules.'example.com/depa']
+    packages = [
+      'example.com/depa'
+    ]
+
+  [cacheModules.'example.com/depb']
+    packages = [
+      'example.com/depb'
+    ]
+    deps = [
+      'example.com/depa'
+    ]

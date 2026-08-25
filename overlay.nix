@@ -3,7 +3,6 @@ final: prev: {
     (final.callPackage ./builder {})
     buildGoApplication
     mkGoEnv
-    mkGoCacheEnv
     hooks
     ;
   gomod2nix = final.callPackage ./default.nix {};
