@@ -84,10 +84,19 @@ func generateFunc(cmd *cobra.Command, args []string) error {
 
 	var goPackagePath string
 	var subPackages []string
+	var goVersion string
 
 	if tmpProj != nil {
 		subPackages = tmpProj.SubPackages
 		goPackagePath = tmpProj.GoPackagePath
+		// The temporary project's own go.mod records the generating toolchain,
+		// not what the requested packages need; take it from their module.
+		goVersion = tmpProj.GoVersion
+	} else {
+		goVersion, err = generate.GoVersion(directory)
+		if err != nil {
+			return fmt.Errorf("error reading Go version: %w", err)
+		}
 	}
 
 	var cacheModules map[string]*schema.CacheModule
@@ -98,7 +107,7 @@ func generateFunc(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	output, err := schema.Marshal(pkgs, goPackagePath, subPackages, cacheModules)
+	output, err := schema.Marshal(pkgs, goVersion, goPackagePath, subPackages, cacheModules)
 	if err != nil {
 		return fmt.Errorf("error marshaling output: %w", err)
 	}

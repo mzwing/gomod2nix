@@ -30,8 +30,14 @@ type CacheModule struct {
 }
 
 type Output struct {
-	SchemaVersion int                 `toml:"schema"`
-	Mod           map[string]*Package `toml:"mod"`
+	SchemaVersion int `toml:"schema"`
+
+	// Version from the go directive of the project's go.mod. The Nix builder
+	// reads go.mod itself only when it is handed a working directory; for a
+	// fetched source this is the only record of what the module requires.
+	GoVersion string `toml:"go,omitempty"`
+
+	Mod map[string]*Package `toml:"mod"`
 
 	// Packages with passed import paths trigger `go install` based on this list
 	SubPackages []string `toml:"subPackages,omitempty"`
@@ -51,9 +57,10 @@ type Output struct {
 	CacheModules map[string]*CacheModule `toml:"cacheModules,omitempty"`
 }
 
-func Marshal(pkgs []*Package, goPackagePath string, subPackages []string, cacheModules map[string]*CacheModule) ([]byte, error) {
+func Marshal(pkgs []*Package, goVersion, goPackagePath string, subPackages []string, cacheModules map[string]*CacheModule) ([]byte, error) {
 	out := &Output{
 		SchemaVersion: SchemaVersion,
+		GoVersion:     goVersion,
 		Mod:           make(map[string]*Package),
 		SubPackages:   subPackages,
 		GoPackagePath: goPackagePath,

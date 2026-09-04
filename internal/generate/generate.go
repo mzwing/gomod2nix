@@ -71,6 +71,21 @@ func parseGoMod(directory string) (*modfile.File, error) {
 	return modfile.Parse(goModPath, data, nil)
 }
 
+// GoVersion returns the version from the go directive of a project directory's
+// go.mod, or the empty string when the go.mod carries no go directive.
+func GoVersion(directory string) (string, error) {
+	mod, err := parseGoMod(directory)
+	if err != nil {
+		return "", err
+	}
+
+	if mod.Go == nil {
+		return "", nil
+	}
+
+	return mod.Go.Version, nil
+}
+
 func common(directory string) ([]*goModDownload, map[string]string, error) {
 	mod, err := parseGoMod(directory)
 	if err != nil {

@@ -452,34 +452,43 @@
     );
 
   # Return a Go attribute and error out if the Go version is older than was specified in go.mod.
-  selectGo = attrs: goMod:
+  # go.mod is only readable when a working directory is passed, so for fetched sources the version
+  # comes from the copy the generator recorded in gomod2nix.toml.
+  selectGo = attrs: goMod: modulesStruct:
     attrs.go or (
-      if goMod == null
-      then buildPackages.go
-      else
-        (
-          let
-            goVersion = goMod.go;
-            goAttrs = lib.reverseList (
-              builtins.filter (
-                attr:
-                  lib.hasPrefix "go_" attr
-                  && (
-                    let
-                      try = builtins.tryEval buildPackages.${attr};
-                    in
-                      try.success && try.value ? version
-                  )
-                  && lib.versionAtLeast buildPackages.${attr}.version goVersion
-              ) (lib.attrNames buildPackages)
-            );
-            goAttr = elemAt goAttrs 0;
-          in (
-            if goAttrs != []
-            then buildPackages.${goAttr}
-            else throw "go.mod specified Go version ${goVersion}, but no compatible Go attribute could be found."
+      let
+        goVersion =
+          if goMod != null && goMod ? go
+          then goMod.go
+          else modulesStruct.go or null;
+      in
+        # The default Go is what nixpkgs builds and caches everything else against, so reach past
+        # it only when it cannot satisfy the module.
+        if goVersion == null || lib.versionAtLeast buildPackages.go.version goVersion
+        then buildPackages.go
+        else
+          (
+            let
+              goAttrs = lib.reverseList (
+                builtins.filter (
+                  attr:
+                    lib.hasPrefix "go_" attr
+                    && (
+                      let
+                        try = builtins.tryEval buildPackages.${attr};
+                      in
+                        try.success && try.value ? version
+                    )
+                    && lib.versionAtLeast buildPackages.${attr}.version goVersion
+                ) (lib.attrNames buildPackages)
+              );
+              goAttr = elemAt goAttrs 0;
+            in (
+              if goAttrs != []
+              then buildPackages.${goAttr}
+              else throw "go.mod specified Go version ${goVersion}, but no compatible Go attribute could be found."
+            )
           )
-        )
     );
 
   # Strip extra data that Go adds to versions, and fall back to a version based on the date if it's a placeholder value.
@@ -510,7 +519,7 @@
     goMod = parseGoMod (readFile "${toString pwd}/go.mod");
     modulesStruct = fromTOML (readFile modules);
 
-    go = selectGo attrs goMod;
+    go = selectGo attrs goMod modulesStruct;
 
     vendorEnv = mkVendorEnv {
       inherit
@@ -602,7 +611,7 @@
       then parseGoMod (readFile goModPath)
       else null;
 
-    go = selectGo attrs goMod;
+    go = selectGo attrs goMod modulesStruct;
 
     defaultPackage = modulesStruct.goPackagePath or "";
 

@@ -9,7 +9,7 @@ Arguments:
 - **modules** Path to `gomod2nix.toml` (\_default: `pwd + "/gomod2nix.toml"`).
 - **src** Path to sources (\_default: `pwd`).
 - **pwd** Path to working directory (\_default: `null`).
-- **go** The Go compiler to use (can be omitted).
+- **go** The Go compiler to use (can be omitted, see [Go toolchain selection](#go-toolchain-selection)).
 - **subPackages** Only build these specific sub packages.
 - **allowGoReference** Allow references to the Go compiler in the output closure (\_default: `false`).
 - **tags** A list of tags to pass the Go compiler during the build (\_default: `[ ]`).
@@ -58,6 +58,20 @@ Useful `passthru` attributes for debugging or pushing to a binary cache:
 Legacy `gomod2nix.toml` files (schema <= 3, flat `cachePackages` list)
 continue to use the previous monolithic cache derivation. A
 `gomod2nix.toml` with neither section builds no cache derivation at all.
+
+#### Go toolchain selection
+
+When **go** is not passed, the compiler is chosen from the version in the
+project's `go` directive: the nixpkgs default `go` if it already satisfies
+that version, otherwise the newest `go_*` attribute that does. A module
+requiring a Go newer than anything in nixpkgs is an evaluation error rather
+than a build that tries to download a toolchain it cannot reach from the
+sandbox.
+
+The directive is read from `go.mod` when **pwd** is passed. For a fetched
+**src** there is no `go.mod` to read at evaluation time, so the generator
+records the same version as a top-level `go` key in `gomod2nix.toml`.
+Files generated before that key existed simply get the default `go`.
 
 ### mkGoEnv
 

@@ -17,6 +17,13 @@ type TempProject struct {
 	Dir           string
 	SubPackages   []string
 	GoPackagePath string
+	GoVersion     string
+}
+
+// listedModule is the module a package belongs to, as reported by go list.
+type listedModule struct {
+	path      string
+	goVersion string
 }
 
 func NewTempProject(packages []string) (*TempProject, error) {
@@ -132,9 +139,9 @@ func NewTempProject(packages []string) (*TempProject, error) {
 	// command resolves modules through the configured proxy, which works
 	// for any GOPROXY (including file:// proxies) and for modules that do
 	// not live at their repository root.
-	modulePaths := make(map[string]string) // import path -> module path
+	modules := make(map[string]listedModule) // import path -> owning module
 	{
-		args := []string{"list", "-f", "{{.ImportPath}}\u001f{{.Module.Path}}"}
+		args := []string{"list", "-f", "{{.ImportPath}}\u001f{{.Module.Path}}\u001f{{.Module.GoVersion}}"}
 		args = append(args, install...)
 
 		cmd := exec.Command("go", args...)
@@ -152,28 +159,30 @@ func NewTempProject(packages []string) (*TempProject, error) {
 				continue
 			}
 
-			parts := strings.SplitN(line, "\u001f", 2)
-			if len(parts) != 2 {
+			parts := strings.SplitN(line, "\u001f", 3)
+			if len(parts) != 3 {
 				continue
 			}
-			modulePaths[parts[0]] = parts[1]
+			modules[parts[0]] = listedModule{path: parts[1], goVersion: parts[2]}
 		}
 	}
 
 	var goPackagePath string
+	var goVersion string
 	for _, path := range install {
 		slog.Info("Resolving module path for import path", "path", path)
 
-		p, ok := modulePaths[path]
-		if !ok || p == "" {
+		m, ok := modules[path]
+		if !ok || m.path == "" {
 			return nil, fmt.Errorf("could not resolve module for import path: %s", path)
 		}
 
-		if goPackagePath != "" && p != goPackagePath {
+		if goPackagePath != "" && m.path != goPackagePath {
 			return nil, fmt.Errorf("mixed origin packages are not allowed")
 		}
 
-		goPackagePath = p
+		goPackagePath = m.path
+		goVersion = m.goVersion
 	}
 
 	subPackages := []string{}
@@ -192,6 +201,7 @@ func NewTempProject(packages []string) (*TempProject, error) {
 		Dir:           dir,
 		SubPackages:   subPackages,
 		GoPackagePath: goPackagePath,
+		GoVersion:     goVersion,
 	}, nil
 }
 

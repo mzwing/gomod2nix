@@ -142,6 +142,9 @@
 
           actual = modulesStruct.mod or {};
 
+          recordedGo = modulesStruct.go or null;
+          expectedGo = goMod.go or null;
+
           missing = lib.filter (name: !(builtins.hasAttr name actual)) (
             builtins.attrNames expected
           );
@@ -159,10 +162,11 @@
             missing modules: ${toString missing}
             extra modules: ${toString extra}
             version mismatches: ${toString mismatched}
+            go directive: recorded "${toString recordedGo}", go.mod says "${toString expectedGo}"
             Regenerate it with: gomod2nix
           '';
         in
-          assert lib.assertMsg (missing == [] && extra == [] && mismatched == [])
+          assert lib.assertMsg (missing == [] && extra == [] && mismatched == [] && recordedGo == expectedGo)
           report;
             pkgs.runCommand "gomod2nix-toml-freshness" {} ''
               touch $out

@@ -1,4 +1,5 @@
 schema = 4
+go = '1.26.0'
 
 [mod]
   [mod.'github.com/inconshreveable/mousetrap']
