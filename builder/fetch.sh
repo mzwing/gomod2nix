@@ -1,6 +1,9 @@
-source $stdenv/setup
+# shellcheck shell=bash disable=SC2154
+# shellcheck source=/dev/null
+source "$stdenv/setup"
 
-export HOME=$(mktemp -d)
+HOME="$(mktemp -d)"
+export HOME
 
 # Optional explicit module proxy override (e.g. a file:// proxy for
 # offline builds). A dedicated variable is used because the daemon may
@@ -15,7 +18,7 @@ go mod download "$goPackagePath@$version"
 
 dir=$(go mod download --json "$goPackagePath@$version" | jq -r .Dir)
 
-chmod -R +w $dir
-find $dir -iname ".ds_store" | xargs -r rm -rf
+chmod -R +w "$dir"
+find "$dir" -iname '.ds_store' -exec rm -rf {} +
 
-cp -r $dir $out
+cp -r "$dir" "$out"

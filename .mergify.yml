@@ -5,7 +5,6 @@ queue_rules:
       - label~=merge-queue|dependencies
     merge_conditions:
       - check-success=Flake checks
-      - check-success=Impure tests
     merge_method: rebase
 
 pull_request_rules:

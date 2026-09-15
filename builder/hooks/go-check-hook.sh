@@ -1,22 +1,22 @@
 # shellcheck shell=bash disable=SC2154
 
 goCheckHook() {
-    echo "Executing goCheckHook"
+  echo "Executing goCheckHook"
 
-    runHook preCheck
+  runHook preCheck
 
-    # We do not set trimpath for tests, in case they reference test assets
-    export GOFLAGS=${GOFLAGS//-trimpath/}
+  # We do not set trimpath for tests, in case they reference test assets
+  export GOFLAGS=${GOFLAGS//-trimpath/}
 
-    for pkg in $(getGoDirs test); do
-      buildGoDir test "$pkg"
-    done
+  for pkg in $(getGoDirs test); do
+    buildGoDir test "$pkg"
+  done
 
-    runHook postCheck
+  runHook postCheck
 
-    echo "Finished goCheckHook"
+  echo "Finished goCheckHook"
 }
 
 if [ -z "${checkPhase-}" ]; then
-    checkPhase=goCheckHook
+  checkPhase=goCheckHook
 fi

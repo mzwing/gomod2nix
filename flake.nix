@@ -21,7 +21,7 @@
       );
 
     perSystem = forAllSystems (
-      system: pkgs: let
+      _: pkgs: let
         lib = pkgs.lib;
 
         callPackage = pkgs.callPackage;
@@ -41,30 +41,6 @@
             hooks
             ;
         };
-
-        # Only Nix files matter for formatting. Filtering (instead of
-        # using the flake source directly) keeps untracked working-tree
-        # junk like .direnv out of the sandbox when evaluating locally
-        # with a dirty tree.
-        fmtSrc = lib.cleanSourceWith {
-          src = ./.;
-          filter = path: type:
-            type == "directory" || lib.hasSuffix ".nix" path;
-        };
-
-        # Formatting check, sandboxed equivalent of `alejandra --check`.
-        fmtCheck =
-          pkgs.runCommand "gomod2nix-fmt-check"
-          {
-            nativeBuildInputs = [pkgs.alejandra];
-          }
-          ''
-            cp -r ${fmtSrc} source
-            chmod -R u+w source
-            cd source
-            find . -name '*.nix' -print0 | xargs -0 alejandra --check
-            touch $out
-          '';
 
         # golangci-lint check. The module dependencies come from the
         # vendor tree of the gomod2nix build itself (fixed-output
@@ -172,23 +148,6 @@
               touch $out
             '';
 
-        # Static lint of the GitHub Actions workflows themselves
-        # (borrowed from nur-packages' tests.yml, but sandboxed so it is
-        # covered by a single `nix flake check`).
-        workflowLintCheck =
-          pkgs.runCommand "gomod2nix-actionlint-check"
-          {
-            nativeBuildInputs = [
-              pkgs.actionlint
-              pkgs.shellcheck
-            ];
-          }
-          ''
-            cd ${./.github}
-            actionlint workflows/*.yml
-            touch $out
-          '';
-
         # Offline end-to-end tests (see tests/default.nix). Imported
         # directly instead of via callPackage: the file only needs
         # explicitly listed arguments, and callPackage's makeOverridable
@@ -207,16 +166,10 @@
         packages.default = gomod2nix;
         checks =
           {
-            fmt = fmtCheck;
             lint = lintCheck;
             toml-freshness = tomlFreshnessCheck;
           }
-          // tests
-          # shellcheck needs GHC, which nixpkgs cannot bootstrap on
-          # riscv64-linux.
-          // lib.optionalAttrs (system != "riscv64-linux") {
-            actionlint = workflowLintCheck;
-          };
+          // tests;
         legacyPackages = {
           # we cannot put them in packages because they are builder functions
           inherit

@@ -3,8 +3,6 @@
   pkgs,
   ...
 }: {
-  overlays = [inputs.nur.overlays.default];
-
   languages.go = {
     enable = true;
     enableHardeningWorkaround = true;
@@ -17,20 +15,33 @@
     lsp.enable = true;
   };
 
-  packages = with pkgs; [
-    alejandra
-    golangci-lint
-    nixd
-    nur.repos.mzwing.typenix
-  ];
+  packages =
+    (with pkgs; [
+      actionlint
+      alejandra
+      golangci-lint
+      just
+      nixd
+      shellcheck
+      shfmt
+    ])
+    ++ (with inputs.nur-packages.packages.${pkgs.stdenv.hostPlatform.system}; [
+      typenix
+    ]);
+
+  cachix.pull = ["mzwing"];
 
   enterTest = ''
     go version
     dlv version
     gopls version
+    actionlint -version
     alejandra --version
     golangci-lint version
+    just --version
     nixd --version
+    shellcheck --version
+    shfmt --version
     typenix --version
   '';
 }

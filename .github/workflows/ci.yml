@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  # actions: write is required to purge expired cache entries.
+  actions: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Master runs always finish: they are the only writer of the nix-ci- store cache that pull requests restore from.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  checks:
+    name: Flake checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Nix
+        uses: mzwing/nix-actions/nix/setup@master
+        with:
+          cachix-pull: 'false'
+          install-devenv: 'true'
+
+      - name: Restore Nix store
+        uses: mzwing/nix-actions/nix/restore-store@master
+        with:
+          save: ${{ github.ref == 'refs/heads/master' }}
+          gc-max-store-size-linux: 4G
+
+      - name: Check flake
+        run: nix flake check --no-write-lock-file --print-build-logs
+
+      # typenix and the linters live in the devenv environment (NUR), not the flake's nixpkgs, so this cannot be a sandboxed flake check.
+      - name: Lint
+        run: devenv shell -- just lint
+
+      # A normal step, so it still runs before restore-store's post-phase save.
+      - name: Collect garbage outside the build closure
+        if: github.ref == 'refs/heads/master'
+        uses: mzwing/nix-actions/nix/gc-store@master
+        with:
+          drvs-file: ci/drvs.nix
+          gcroots-name: gomod2nix-ci

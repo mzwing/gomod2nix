@@ -1,19 +1,19 @@
 # shellcheck shell=bash disable=SC2154
 
 goInstallHook() {
-    echo "Executing goInstallHook"
+  echo "Executing goInstallHook"
 
-    runHook preInstall
+  runHook preInstall
 
-    mkdir -p "$out"
-    dir="$GOPATH/bin"
-    [ -e "$dir" ] && cp -r "$dir" "$out"
+  mkdir -p "$out"
+  dir="$GOPATH/bin"
+  [ -e "$dir" ] && cp -r "$dir" "$out"
 
-    runHook postInstall
+  runHook postInstall
 
-    echo "Finished goInstallHook"
+  echo "Finished goInstallHook"
 }
 
 if [ -z "${installPhase-}" ]; then
-    installPhase=goInstallHook
+  installPhase=goInstallHook
 fi
