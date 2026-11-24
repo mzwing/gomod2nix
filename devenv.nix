@@ -29,8 +29,6 @@
       typenix
     ]);
 
-  cachix.pull = ["mzwing"];
-
   enterTest = ''
     go version
     dlv version
